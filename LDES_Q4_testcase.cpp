@@ -1,7 +1,12 @@
-// LDES -- a toy "Linear DES": a 2-round Feistel cipher on a 4-bit block
-// with a 2-bit key K = (k1, k2). The DES S-box is replaced by a linear map.
+// LDES -- a 2-round Feistel cipher on a 4-bit block with a 2-bit key K=(k1,k2).
+// The DES S-box is replaced by a linear map.
 //
-// Encrypting M = 0011 with K = 01 should yield C = 0100.
+// Because it is a Feistel network with a symmetric wrapper (rotateLeft at the
+// start, swap + rotateRight at the end), the SAME routine encrypts and
+// decrypts -- decryption just feeds the round keys in reverse order:
+//
+//     C = crypt(M, k1, k2);   // encrypt
+//     M = crypt(C, k2, k1);   // decrypt
 
 #include <iostream>
 #include <string>
@@ -24,22 +29,13 @@ std::string rotateLeft(const std::string& s)  { return s.substr(1) + s.front(); 
 std::string rotateRight(const std::string& s) { return s.back() + s.substr(0, s.size() - 1); }
 
 // ---- the round function f(X, Y) = Z ------------------------------------
-// X is the 2-bit right half; keyBit is k1 or k2 (the subkey is that bit x3).
+// X is the 2-bit half; keyBit is k1 or k2 (the subkey is that bit x3).
 std::string roundFunction(const std::string& X, char keyBit) {
-    // Expansion E:  X1 X2  ->  X1 X2 X1
-    std::string expanded = { X[0], X[1], X[0] };
-
-    // Subkey: K1 = (k1 k1 k1) or K2 = (k2 k2 k2)
-    std::string subkey(3, keyBit);
-
-    // I = E(X) XOR subkey
-    std::string I = xorBits(expanded, subkey);
-
-    // Linear map:  J1 = I2 + 1,  J2 = I3 + 1   (I1 is unused)
-    std::string J = { flip(I[1]), flip(I[2]) };
-
-    // rotate left -> Z
-    return rotateLeft(J);
+    std::string expanded = { X[0], X[1], X[0] };   // E:  X1 X2 -> X1 X2 X1
+    std::string subkey(3, keyBit);                 // K1=(k1 k1 k1) or K2=(k2 k2 k2)
+    std::string I = xorBits(expanded, subkey);     // I = E(X) XOR subkey
+    std::string J = { flip(I[1]), flip(I[2]) };    // J1 = I2+1, J2 = I3+1
+    return rotateLeft(J);                          // rotate left -> Z
 }
 
 // One Feistel round, in place:  A' = B,  B' = A XOR f(B, keyBit)
@@ -49,26 +45,31 @@ void feistelRound(std::string& A, std::string& B, char keyBit) {
     B = newB;
 }
 
+// Core routine. Encryption feeds keys in order (k1, k2);
+// decryption feeds them reversed (k2, k1).
+std::string crypt(const std::string& in, char firstKey, char secondKey) {
+    std::string permuted = rotateLeft(in);          // initial permutation
+    std::string A = permuted.substr(0, 2);
+    std::string B = permuted.substr(2, 2);
+
+    feistelRound(A, B, firstKey);                   // round 1
+    feistelRound(A, B, secondKey);                  // round 2
+
+    return rotateRight(B + A);                      // swap halves, then rotate right
+}
+
 int main() {
     const std::string M = "0011";   // 4-bit plaintext
     const std::string K = "01";     // 2-bit key (k1, k2)
 
-    // Initial permutation: rotate left, then split into halves.
-    std::string permuted = rotateLeft(M);
-    std::string A = permuted.substr(0, 2);
-    std::string B = permuted.substr(2, 2);
-    std::cout << "A0 B0: " << A << ' ' << B << '\n';
+    std::string C         = crypt(M, K[0], K[1]);   // encrypt
+    std::string recovered = crypt(C, K[1], K[0]);   // decrypt (keys reversed)
 
-    // Round 1 uses k1, round 2 uses k2.
-    feistelRound(A, B, K[0]);
-    std::cout << "A1 B1: " << A << ' ' << B << '\n';
-
-    feistelRound(A, B, K[1]);
-    std::cout << "A2 B2: " << A << ' ' << B << '\n';
-
-    // Swap the halves (B2 | A2), then rotate right -> ciphertext.
-    std::string C = rotateRight(B + A);
-    std::cout << "Ciphertext C: " << C << '\n';
+    std::cout << "Plaintext  M : " << M << '\n';
+    std::cout << "Key        K : " << K << '\n';
+    std::cout << "Ciphertext C : " << C << '\n';
+    std::cout << "Decrypted    : " << recovered
+              << (recovered == M ? "   (matches M)" : "   (MISMATCH!)") << '\n';
 
     return 0;
 }
